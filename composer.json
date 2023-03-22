@@ -1,0 +1,22 @@
+{
+    "name": "thisispiers/acloud",
+    "description": "Unofficial PHP client for Apple iCloud services",
+    "version": "0.1.0",
+    "type": "library",
+    "keywords": ["icloud", "apple", "appleid", "client", "sdk", "contacts"],
+    "license": "Unlicense",
+    "autoload": {
+        "psr-4": {
+            "thisispiers\\Acloud\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "thisispiers"
+        }
+    ],
+    "require": {
+        "php": "^8",
+        "guzzlehttp/guzzle": "^7.0"
+    }
+}
