@@ -25,19 +25,22 @@ class Session
     const CLIENT_BUILD_NUMBER = '2311Hotfix27';
 
     protected \GuzzleHttp\ClientInterface $guzzleHttpClient;
-    protected \GuzzleHttp\Cookie\CookieJarInterface $httpCookieJar;
+    public \GuzzleHttp\Cookie\CookieJar $httpCookieJar;
     protected string $endpointAuth = 'https://idmsa.apple.com/appleauth/auth';
     protected string $endpointSetup = 'https://setup.icloud.com/setup/ws/1';
+    /** @var array<string, string> */
     protected array $headersDefault = [
         'Accept' => 'application/json',
         'Content-Type' => 'application/json',
         'Origin' => 'https://www.icloud.com',
         'User-Agent' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0',
     ];
+    /** @var array<string, string> */
     protected array $headersAuth = [];
     protected string $path = '';
+    /** @var array<string, string|array<string, array<mixed>|bool|float|int|object|string|null>> */
     protected array $state = [
-        'accountInfo' => null,
+        'accountInfo' => [],
         'scnt' => '',
         'sessionId' => '',
         'sessionToken' => '',
@@ -83,36 +86,52 @@ class Session
 
     public function loadState(?string $path = ''): bool
     {
-        if ($path) {
-            $this->path = $path;
+        if ($path !== null && $path !== '') {
+            $this->path = trim($path);
         }
         if (is_readable($this->path)) {
-            $objs = unserialize(file_get_contents($this->path));
+            $objs = file_get_contents($this->path);
+            $objs = unserialize($objs !== false ? $objs : '');
         } else {
             $objs = null;
         }
 
-        if (empty($objs['state']) || !is_array($objs['state'])) {
+        if (!is_array($objs) || !is_array($objs['state'] ?? null)) {
             return false;
         }
 
-        if (
-            !empty($objs['httpCookieJar'])
-            && $objs['httpCookieJar'] instanceof \GuzzleHttp\Cookie\CookieJarInterface
-        ) {
-            $httpCookieJar = $objs['httpCookieJar'];
-        } else {
-            $httpCookieJar = null;
+        $this->state = [];
+        foreach ($objs['state'] as $k => $v) {
+            if (!is_string($k)) { continue; }
+            if (is_string($v)) {
+                $this->state[$k] = $v;
+            }
+            if (is_array($v)) {
+                $__v = [];
+                foreach ($v as $_k => $_v) {
+                    if (!is_string($_k)) { continue; }
+                    if (
+                        is_array($_v)
+                        || is_bool($_v)
+                        || is_float($_v)
+                        || is_int($_v)
+                        || is_object($_v)
+                        || is_string($_v)
+                        || is_null($_v)
+                    ) {
+                        $__v[$_k] = $_v;
+                    }
+                }
+                $this->state[$k] = $__v;
+            }
         }
 
-        $this->state = $objs['state'];
-
-        if ($httpCookieJar) {
-            if (!$this->validateCookies($httpCookieJar)) {
+        if (($objs['httpCookieJar'] ?? null) instanceof \GuzzleHttp\Cookie\CookieJar) {
+            if (!$this->validateCookies($objs['httpCookieJar'])) {
                 // so that $this->isSignedIn() returns false
-                $this->state['accountInfo'] = null;
+                unset($this->state['accountInfo']);
             }
-            $this->httpCookieJar = $httpCookieJar;
+            $this->httpCookieJar = $objs['httpCookieJar'];
             $this->guzzleHttpClient = new \GuzzleHttp\Client([
                 'cookies' => $this->httpCookieJar,
             ]);
@@ -123,7 +142,7 @@ class Session
 
     public function saveState(): bool
     {
-        if (!$this->path) {
+        if ($this->path === '') {
             return false;
         }
 
@@ -135,6 +154,9 @@ class Session
         return true;
     }
 
+    /**
+     * @return array<string, string|array<string, array<mixed>|bool|float|int|object|string|null>>
+     */
     public function getState(): array
     {
         return $this->state;
@@ -142,13 +164,14 @@ class Session
 
     public function isSignedIn(): bool
     {
-        return boolval($this->state['accountInfo'] ?? false);
+        return is_array($this->state['accountInfo'] ?? null)
+            && count($this->state['accountInfo']) > 0;
     }
 
     protected function validateCookies(
-        \GuzzleHttp\Cookie\CookieJarInterface $httpCookieJar,
+        \GuzzleHttp\Cookie\CookieJar $httpCookieJar,
     ): bool {
-        if (!$httpCookieJar->getCookieByName('x-apple-webauth-token')) {
+        if ($httpCookieJar->getCookieByName('x-apple-webauth-token') === null) {
             return false;
         }
 
@@ -194,13 +217,14 @@ class Session
             'trustTokens' => [],
         ];
         if (
-            $this->state['username'] === $username
-            && $this->state['trustToken']
+            ($this->state['username'] ?? '') === $username
+            && ($this->state['trustToken'] ?? '') !== ''
+            && is_string($this->state['trustToken'])
         ) {
             $trustToken = $this->state['trustToken'];
             $signInData['trustTokens'][] = $trustToken;
         } else {
-            $trustToken = null;
+            $trustToken = '';
         }
 
         $this->state['username'] = $username;
@@ -219,6 +243,11 @@ class Session
                     ],
                 ],
             );
+
+            $this->handleSignInResponse($signInResponse);
+            $this->getAccountInfo($trustToken);
+
+            return true;
         } catch (\GuzzleHttp\Exception\ClientException $e) {
             if (
                 $e->getResponse()->getStatusCode() === 409
@@ -227,10 +256,10 @@ class Session
                 // send verification code via SMS if no trusted devices
                 $accountInfo = $this->getAccountInfo($trustToken, false);
                 $dsInfo = $accountInfo['dsInfo'] ?? null;
-                $hasTrustedDevice = $dsInfo['hasICloudQualifyingDevice'] ?? false;
+                $hasTrustedDevice = is_array($dsInfo) && boolval($dsInfo['hasICloudQualifyingDevice'] ?? false);
                 if (!$hasTrustedDevice) {
                     $phoneNumber = $this->sendMFACodeSMS();
-                    if ($phoneNumber) {
+                    if ($phoneNumber !== false) {
                         return $phoneNumber;
                     }
                 }
@@ -240,11 +269,6 @@ class Session
                 throw $e;
             }
         }
-
-        $this->handleSignInResponse($signInResponse);
-        $this->getAccountInfo($trustToken);
-
-        return true;
     }
 
     protected function handleSignInResponse(
@@ -264,9 +288,9 @@ class Session
 
     protected function hasSignInResponse(): bool
     {
-        return $this->httpCookieJar->getCookieByName('aasp')
-            && $this->state['scnt']
-            && $this->state['sessionId'];
+        return $this->httpCookieJar->getCookieByName('aasp') !== null
+            && ($this->state['scnt'] ?? '') !== ''
+            && ($this->state['sessionId'] ?? '') !== '';
     }
 
     /**
@@ -302,6 +326,9 @@ class Session
 
         $body = strval($phoneResponse->getBody());
         $verification = \GuzzleHttp\Utils::jsonDecode($body, true);
+        if (!is_array($verification)) {
+            return false;
+        }
         $trustedPhoneNumber = $verification['trustedPhoneNumber'] ?? null;
         return $trustedPhoneNumber['numberWithDialCode'] ?? false;
     }
@@ -345,10 +372,12 @@ class Session
             ],
         );
         if ($mfaResponse->getStatusCode() === 204) {
-            $trustToken = $this->getTrustToken();
-            $this->getAccountInfo($trustToken);
+            $tokenTrusted = $this->getTrustToken();
+            if (is_string($this->state['trustToken'] ?? null)) {
+                $this->getAccountInfo($this->state['trustToken']);
+            }
 
-            return true;
+            return $tokenTrusted;
         } else {
             return false;
         }
@@ -375,11 +404,14 @@ class Session
         return $this->handleTrustResponse($trustResponse);
     }
 
+    /**
+     * @return array<string, string>
+     */
     protected function getMFAHeaders(): array
     {
         return array_merge($this->headersAuth, [
-            'scnt' => $this->state['scnt'],
-            'X-Apple-ID-Session-Id' => $this->state['sessionId'],
+            'scnt' => is_string($v = $this->state['scnt'] ?? '') ? $v : '',
+            'X-Apple-ID-Session-Id' => is_string($v = $this->state['sessionId'] ?? '') ? $v : '',
         ]);
     }
 
@@ -394,15 +426,17 @@ class Session
 
         $this->saveState();
 
-        return $this->state['sessionToken'] && $this->state['trustToken'];
+        return $this->state['sessionToken'] !== ''
+            && $this->state['trustToken'] !== '';
     }
 
     /**
      * @throws \GuzzleHttp\Exception\ClientException HTTP non-200 status code
      * @throws \InvalidArgumentException
+     * @return bool|array<mixed>
      */
     protected function getAccountInfo(
-        ?string $trustToken = '',
+        string $trustToken = '',
         bool $saveState = true,
     ): bool|array {
         $response = $this->guzzleHttpClient->request(
@@ -412,15 +446,18 @@ class Session
                 'body' => \GuzzleHttp\Utils::jsonEncode([
                     'dsWebAuthToken' => $this->state['sessionToken'],
                     'extended_login' => true,
-                    'trustToken' => $trustToken ?: '',
+                    'trustToken' => $trustToken,
                 ]),
                 'cookies' => $this->httpCookieJar,
                 'headers' => $this->headersDefault,
             ],
         );
-        if ($response->getHeader('set-cookie')) {
+        if (count($response->getHeader('set-cookie')) > 0) {
             $body = strval($response->getBody());
             $accountInfo = \GuzzleHttp\Utils::jsonDecode($body, true);
+            if (!is_array($accountInfo)) {
+                return false;
+            }
             if ($saveState) {
                 $this->state['accountInfo'] = $accountInfo;
                 $this->saveState();

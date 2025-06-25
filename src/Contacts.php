@@ -33,7 +33,7 @@ class Contacts
     ];
     protected ?string $prefToken;
     protected array $state;
-    protected ?string $syncToken;
+    protected ?string $syncToken = null;
 
     public function __construct(Session $session) {
         $this->state = $session->getState();
@@ -160,7 +160,7 @@ class Contacts
             method: 'POST',
             uri: $webservice['url'] . '/co/contacts/card/',
             options: [
-                'body' => \GuzzleHttp\Utils::jsonDecode([
+                'body' => \GuzzleHttp\Utils::jsonEncode([
                     'contacts' => $contacts,
                 ], true),
                 'cookies' => $this->httpCookieJar,
