@@ -309,20 +309,40 @@ class Session
             throw new \BadMethodCallException($message);
         }
 
-        $phoneResponse = $this->guzzleHttpClient->request(
-            method: 'PUT',
-            uri: $this->endpointAuth . '/verify/phone',
-            options: [
-                'body' => \GuzzleHttp\Utils::jsonEncode([
-                    'mode' => 'sms',
-                    'phoneNumber' => [
-                        'id' => 1,
-                    ],
-                ]),
-                'cookies' => $this->httpCookieJar,
-                'headers' => $this->getMFAHeaders(),
-            ],
-        );
+        try {
+            $phoneResponse = $this->guzzleHttpClient->request(
+                method: 'PUT',
+                uri: $this->endpointAuth . '/verify/phone',
+                options: [
+                    'body' => \GuzzleHttp\Utils::jsonEncode([
+                        'mode' => 'sms',
+                        'phoneNumber' => [
+                            'id' => 1,
+                        ],
+                    ]),
+                    'cookies' => $this->httpCookieJar,
+                    'headers' => $this->getMFAHeaders(),
+                ],
+            );
+        } catch (\GuzzleHttp\Exception\RequestException $e) {
+            $body = strval($e->getResponse()?->getBody());
+            $verification = \GuzzleHttp\Utils::jsonDecode($body, true);
+            if (is_array($verification) && is_array($verification['serviceErrors'] ?? null)) {
+                $messages = [];
+                foreach ($verification['serviceErrors'] as $serviceError) {
+                    if (
+                        is_array($serviceError)
+                        && is_string($serviceError['message'] ?? null)
+                        && $serviceError['message'] !== ''
+                    ) {
+                        $messages[] = $serviceError['message'];
+                    }
+                }
+                throw new \Exception(implode('. ', $messages));
+            } else {
+                throw $e;
+            }
+        }
 
         $body = strval($phoneResponse->getBody());
         $verification = \GuzzleHttp\Utils::jsonDecode($body, true);
