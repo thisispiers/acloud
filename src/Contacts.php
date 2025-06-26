@@ -21,26 +21,64 @@ namespace thisispiers\Acloud;
 
 class Contacts
 {
-    protected \GuzzleHttp\ClientInterface $guzzleHttpClient;
-    protected \GuzzleHttp\Cookie\CookieJarInterface $httpCookieJar;
-    protected string $clientMasteringNumber = '2018B29';
-    protected string $clientVersion = '2.1';
+    const CLIENT_ID = 'ebff7ce8-f15f-4a19-8cfd-9fbcb3b21cb4';
+    const CLIENT_BUILD_NUMBER = '2522Project44';
+    const CLIENT_MASTERING_NUMBER = '2522B24';
+    const CLIENT_VERSION = '2.1';
+
     protected array $headersDefault = [
         'Accept' => 'application/json',
         'Content-Type' => 'application/json',
         'Origin' => 'https://www.icloud.com',
         'User-Agent' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0',
     ];
-    protected ?string $prefToken;
-    protected array $state;
+    protected array $sessionState = [];
+    protected ?string $prefToken = null;
     protected ?string $syncToken = null;
 
-    public function __construct(Session $session) {
-        $this->state = $session->getState();
-        $this->httpCookieJar = $session->getHttpCookieJar();
-        $this->guzzleHttpClient = new \GuzzleHttp\Client([
-            'cookies' => $this->httpCookieJar,
+    public function __construct(
+        protected Session $session,
+    ) {
+        $this->sessionState = $this->session->getState();
+
+        $prefToken = $this->session->httpCookieJar->getCookieByName('prefToken');
+        if ($prefToken !== null) {
+            $this->prefToken = $prefToken->getValue();
+        }
+        $syncToken = $this->session->httpCookieJar->getCookieByName('syncToken');
+        if ($syncToken !== null) {
+            $this->syncToken = $syncToken->getValue();
+        }
+    }
+
+    protected function setTokenCookies(mixed $prefToken, mixed $syncToken): void
+    {
+        $this->prefToken = is_string($prefToken) ? $prefToken : null;
+        $this->syncToken = is_string($syncToken) ? $syncToken : null;
+
+        $prefToken = new \GuzzleHttp\Cookie\SetCookie([
+            'Name' => 'prefToken',
+            'Value' => $this->prefToken,
+            'Domain' => '.icloud.com',
+            'Path' => '/',
+            'MaxAge' => 300,
+            'Secure' => true,
+            'Discard' => true,
+            'HttpOnly' => true,
         ]);
+        $this->session->httpCookieJar->setCookie($prefToken);
+        $syncToken = new \GuzzleHttp\Cookie\SetCookie([
+            'Name' => 'syncToken',
+            'Value' => $this->syncToken,
+            'Domain' => '.icloud.com',
+            'Path' => '/',
+            'MaxAge' => 300,
+            'Secure' => true,
+            'Discard' => true,
+            'HttpOnly' => true,
+        ]);
+        $this->session->httpCookieJar->setCookie($syncToken);
+        $this->session->saveState();
     }
 
     /**
@@ -52,39 +90,38 @@ class Contacts
      */
     public function list(): array
     {
-        if (!($this->state['accountInfo'] ?? null)) {
+        if (!($this->sessionState['accountInfo'] ?? null)) {
             throw new \BadMethodCallException('Invalid state');
         }
 
-        $webservice = $this->state['accountInfo']['webservices']['contacts'];
+        $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
         $baseURL = $webservice['url'] ?? null;
         $status = $webservice['status'] ?? null;
         if (!$baseURL || $status !== 'active') {
             throw new \BadMethodCallException('Cannot access contacts service');
         }
 
-        $response = $this->guzzleHttpClient->request(
+        $response = $this->session->guzzleHttpClient->request(
             method: 'GET',
             uri: $baseURL . '/co/startup',
             options: [
-                'cookies' => $this->httpCookieJar,
+                'cookies' => $this->session->httpCookieJar,
                 'headers' => $this->headersDefault,
                 'query' => [
-                    'clientBuildNumber' => Session::CLIENT_BUILD_NUMBER,
-                    'clientId' => Session::CLIENT_ID,
-                    'clientMasteringNumber' => $this->clientMasteringNumber,
-                    'clientVersion' => $this->clientVersion,
-                    'dsid' => $this->state['accountInfo']['dsInfo']['dsid'],
-                    'locale' => 'en_US',
-                    'order' => 'first,last',
+                    'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
+                    'clientId' => self::CLIENT_ID,
+                    'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
+                    'clientVersion' => self::CLIENT_VERSION,
+                    'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
+                    'locale' => 'en_GB',
+                    'order' => 'last,first',
                 ],
             ],
         );
 
         $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
 
-        $this->prefToken = $body['prefToken'] ?? null;
-        $this->syncToken = $body['syncToken'] ?? null;
+        $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
 
         if (!isset($body['contacts'])) {
             throw new Exception\InvalidResponseException($body);
@@ -155,25 +192,25 @@ class Contacts
             }
         }
 
-        $webservice = $this->state['accountInfo']['webservices']['contacts'];
-        $response = $this->guzzleHttpClient->request(
+        $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
+        $response = $this->session->guzzleHttpClient->request(
             method: 'POST',
             uri: $webservice['url'] . '/co/contacts/card/',
             options: [
                 'body' => \GuzzleHttp\Utils::jsonEncode([
                     'contacts' => $contacts,
                 ], true),
-                'cookies' => $this->httpCookieJar,
+                'cookies' => $this->session->httpCookieJar,
                 'headers' => $this->headersDefault,
                 'query' => [
-                    // 'clientBuildNumber' => Session::CLIENT_BUILD_NUMBER,
-                    'clientId' => Session::CLIENT_ID,
-                    // 'clientMasteringNumber' => $this->clientMasteringNumber,
-                    'clientVersion' => $this->clientVersion,
-                    'dsid' => $this->state['accountInfo']['dsInfo']['dsid'],
+                    'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
+                    'clientId' => self::CLIENT_ID,
+                    'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
+                    'clientVersion' => self::CLIENT_VERSION,
+                    'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
                     'method' => $method,
-                    'locale' => 'en_US',
-                    'order' => 'first,last',
+                    'locale' => 'en_GB',
+                    'order' => 'last,first',
                     'prefToken' => $this->prefToken,
                     'syncToken' => $this->syncToken,
                 ],
@@ -186,8 +223,7 @@ class Contacts
             throw new Exception\InvalidResponseException($body);
         }
 
-        $this->prefToken = $body['prefToken'] ?? null;
-        $this->syncToken = $body['syncToken'] ?? null;
+        $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
 
         return true;
     }

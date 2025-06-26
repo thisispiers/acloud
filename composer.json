@@ -1,7 +1,7 @@
 {
     "name": "thisispiers/acloud",
     "description": "Unofficial PHP client for Apple iCloud services",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "type": "library",
     "keywords": ["icloud", "apple", "appleid", "client", "sdk", "contacts"],
     "license": "Unlicense",

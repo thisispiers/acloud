@@ -22,9 +22,8 @@ namespace thisispiers\Acloud;
 class Session
 {
     const CLIENT_ID = 'd39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d';
-    const CLIENT_BUILD_NUMBER = '2311Hotfix27';
 
-    protected \GuzzleHttp\ClientInterface $guzzleHttpClient;
+    public \GuzzleHttp\ClientInterface $guzzleHttpClient;
     public \GuzzleHttp\Cookie\CookieJar $httpCookieJar;
     protected string $endpointAuth = 'https://idmsa.apple.com/appleauth/auth';
     protected string $endpointSetup = 'https://setup.icloud.com/setup/ws/1';
