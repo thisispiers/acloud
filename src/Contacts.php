@@ -88,7 +88,7 @@ class Contacts
      * @throws \thisispiers\Acloud\Exception\InvalidResponseException
      * @throws \GuzzleHttp\Exception\ClientException HTTP non-200 status code
      */
-    public function list(): array
+    public function all(): array
     {
         if (!($this->sessionState['accountInfo'] ?? null)) {
             throw new \BadMethodCallException('Invalid state');
@@ -123,10 +123,13 @@ class Contacts
 
         $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
 
-        if (!isset($body['contacts'])) {
+        if (!is_array($body['contacts'] ?? null)) {
             throw new Exception\InvalidResponseException($body);
         }
-        return $body['contacts'];
+        return [
+            'groups' => is_array($body['groups'] ?? null) ? $body['groups'] : [],
+            'contacts' => $body['contacts'],
+        ];
     }
 
     /**
@@ -135,7 +138,7 @@ class Contacts
      * @throws \thisispiers\Acloud\Exception\InvalidResponseException Contacts service error
      * @throws \thisispiers\Acloud\Exception\MissingSyncTokenException
      */
-    public function create(array $contacts): true
+    public function create(array $contacts): array
     {
         foreach ($contacts as $c => $contact) {
             if (empty($contact['contactId'])) {
@@ -151,7 +154,7 @@ class Contacts
      * @throws \thisispiers\Acloud\Exception\InvalidResponseException Contacts service error
      * @throws \thisispiers\Acloud\Exception\MissingSyncTokenException
      */
-    public function update(array $contacts): true
+    public function update(array $contacts): array
     {
         return $this->contactRequest($contacts, 'PUT');
     }
@@ -162,7 +165,7 @@ class Contacts
      * @throws \thisispiers\Acloud\Exception\InvalidResponseException Contacts service error
      * @throws \thisispiers\Acloud\Exception\MissingSyncTokenException
      */
-    public function delete(array $contacts): true
+    public function delete(array $contacts): array
     {
         $_contacts = [];
         foreach ($contacts as $contact) {
@@ -182,10 +185,10 @@ class Contacts
      * @throws \thisispiers\Acloud\Exception\InvalidResponseException Contacts service error
      * @throws \thisispiers\Acloud\Exception\MissingSyncTokenException
      */
-    protected function contactRequest(array $contacts, string $method = ''): true
+    protected function contactRequest(array $contacts, string $method = ''): array
     {
         if (!$this->syncToken) {
-            $this->list();
+            $this->all();
             if (!$this->syncToken) {
                 $e = 'Could not get contact sync token';
                 throw new Exception\MissingSyncTokenException($e);
@@ -225,7 +228,53 @@ class Contacts
 
         $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
 
-        return true;
+        return $body;
+    }
+
+    public function updateGroups(array $groups): array
+    {
+        if (!$this->syncToken) {
+            $this->all();
+            if (!$this->syncToken) {
+                $e = 'Could not get contact sync token';
+                throw new Exception\MissingSyncTokenException($e);
+            }
+        }
+
+        $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
+        $response = $this->session->guzzleHttpClient->request(
+            method: 'POST',
+            uri: $webservice['url'] . '/co/groups/card/',
+            options: [
+                'body' => \GuzzleHttp\Utils::jsonEncode([
+                    'groups' => $groups,
+                ], true),
+                'cookies' => $this->session->httpCookieJar,
+                'headers' => $this->headersDefault,
+                'query' => [
+                    'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
+                    'clientId' => self::CLIENT_ID,
+                    'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
+                    'clientVersion' => self::CLIENT_VERSION,
+                    'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
+                    'method' => 'PUT',
+                    'locale' => 'en_GB',
+                    'order' => 'last,first',
+                    'prefToken' => $this->prefToken,
+                    'syncToken' => $this->syncToken,
+                ],
+            ],
+        );
+
+        $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
+
+        if (!empty($body['errorCode'])) {
+            throw new Exception\InvalidResponseException($body);
+        }
+
+        $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
+
+        return is_array($body['groups'] ?? null) ? $body['groups'] : [];
     }
 
     protected function newId(): string
