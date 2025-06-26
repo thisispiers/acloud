@@ -35,6 +35,7 @@ class Contacts
     protected array $sessionState = [];
     protected ?string $prefToken = null;
     protected ?string $syncToken = null;
+    protected array $numContactsInGroups = [];
 
     public function __construct(
         protected Session $session,
@@ -100,8 +101,11 @@ class Contacts
      * @throws \thisispiers\Acloud\Exception\InvalidResponseException
      * @throws \GuzzleHttp\Exception\ClientException HTTP non-200 status code
      */
-    public function all(): array
+    public function getSyncToken(): void
     {
+        if ($this->syncToken) {
+            return;
+        }
         if (!($this->sessionState['accountInfo'] ?? null)) {
             throw new \BadMethodCallException('Invalid state');
         }
@@ -134,14 +138,75 @@ class Contacts
         $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
 
         $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
-
-        if (!is_array($body['contacts'] ?? null)) {
-            throw new Exception\InvalidResponseException($body);
+        if (!$this->syncToken) {
+            $e = 'Could not get contact sync token';
+            throw new Exception\MissingSyncTokenException($e);
         }
-        return [
-            'groups' => is_array($body['groups'] ?? null) ? $body['groups'] : [],
-            'contacts' => $body['contacts'],
-        ];
+
+        $this->numContactsInGroups[''] = is_array($v = $body['contactsOrder'] ?? []) ? count($v) : 0;
+        if (is_array($body['groups'] ?? null)) {
+            foreach ($body['groups'] as $group) {
+                if (!is_array($group) || !is_string($group['groupId'] ?? null)) {
+                    continue;
+                }
+                $num = is_array($v = $group['contactIds'] ?? []) ? count($v) : 0;
+                $this->numContactsInGroups[$group['groupId']] = $num;
+            }
+        }
+    }
+
+    public function getNumContactsInGroups(): array
+    {
+        $this->getSyncToken();
+
+        return $this->numContactsInGroups;
+    }
+
+    public function list(string $groupId = '', int $offset = 0, int $limit = 200): array
+    {
+        $this->getSyncToken();
+
+        try {
+            $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
+            $response = $this->session->guzzleHttpClient->request(
+                method: 'GET',
+                uri: $webservice['url'] . '/co/contacts/',
+                options: [
+                    'cookies' => $this->session->httpCookieJar,
+                    'headers' => $this->headersDefault,
+                    'query' => [
+                        'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
+                        'clientId' => self::CLIENT_ID,
+                        'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
+                        'clientVersion' => self::CLIENT_VERSION,
+                        'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
+                        'locale' => 'en_GB',
+                        'order' => 'last,first',
+                        'prefToken' => $this->prefToken,
+                        'syncToken' => $this->syncToken,
+
+                        'groupId' => $groupId,
+                        'offset' => $offset,
+                        'limit' => $limit,
+                    ],
+                ],
+            );
+            $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
+        } catch (\Exception $e) {
+            $body = \GuzzleHttp\Utils::jsonDecode(strval($e->getResponse()->getBody()), true);
+        }
+
+        if (!empty($body['errorCode']) || isset($e)) {
+            if ($this->clearInvalidTokenCookies($body)) {
+                // retry
+                return $this->list($offset, $limit);
+            }
+            throw new Exception\InvalidResponseException($body['errorReason'] ?? '', $body['errorCode'] ?? 0);
+        }
+
+        $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
+
+        return is_array($body['contacts'] ?? null) ? $body['contacts'] : [];
     }
 
     /**
@@ -199,13 +264,7 @@ class Contacts
      */
     protected function contactRequest(array $contacts, string $method = ''): array
     {
-        if (!$this->syncToken) {
-            $this->all();
-            if (!$this->syncToken) {
-                $e = 'Could not get contact sync token';
-                throw new Exception\MissingSyncTokenException($e);
-            }
-        }
+        $this->getSyncToken();
 
         try {
             $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
@@ -250,15 +309,54 @@ class Contacts
         return $body;
     }
 
+    public function listGroups(int $offset = 0, int $limit = 200): array
+    {
+        $this->getSyncToken();
+
+        try {
+            $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
+            $response = $this->session->guzzleHttpClient->request(
+                method: 'GET',
+                uri: $webservice['url'] . '/co/groups/',
+                options: [
+                    'cookies' => $this->session->httpCookieJar,
+                    'headers' => $this->headersDefault,
+                    'query' => [
+                        'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
+                        'clientId' => self::CLIENT_ID,
+                        'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
+                        'clientVersion' => self::CLIENT_VERSION,
+                        'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
+                        'locale' => 'en_GB',
+                        'order' => 'last,first',
+                        'prefToken' => $this->prefToken,
+                        'syncToken' => $this->syncToken,
+                        'offset' => $offset,
+                        'limit' => $limit,
+                    ],
+                ],
+            );
+            $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
+        } catch (\Exception $e) {
+            $body = \GuzzleHttp\Utils::jsonDecode(strval($e->getResponse()->getBody()), true);
+        }
+
+        if (!empty($body['errorCode']) || isset($e)) {
+            if ($this->clearInvalidTokenCookies($body)) {
+                // retry
+                return $this->listGroups($offset, $limit);
+            }
+            throw new Exception\InvalidResponseException($body['errorReason'] ?? '', $body['errorCode'] ?? 0);
+        }
+
+        $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
+
+        return is_array($body['groups'] ?? null) ? $body['groups'] : [];
+    }
+
     public function updateGroups(array $groups): array
     {
-        if (!$this->syncToken) {
-            $this->all();
-            if (!$this->syncToken) {
-                $e = 'Could not get contact sync token';
-                throw new Exception\MissingSyncTokenException($e);
-            }
-        }
+        $this->getSyncToken();
 
         try {
             $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
