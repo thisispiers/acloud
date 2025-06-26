@@ -81,6 +81,18 @@ class Contacts
         $this->session->saveState();
     }
 
+    public function clearInvalidTokenCookies(array $response): bool
+    {
+        $invalid = ($response['errorReason'] ?? '') === 'Invalid sync token';
+        if ($invalid) {
+            $this->prefToken = null;
+            $this->session->httpCookieJar->clear('.icloud.com', '/', 'prefToken');
+            $this->syncToken = null;
+            $this->session->httpCookieJar->clear('.icloud.com', '/', 'syncToken');
+        }
+        return $invalid;
+    }
+
     /**
      * @throws \BadMethodsCallException If not signed in
      * @throws \BadMethodsCallException User cannot access contacts service
@@ -195,35 +207,42 @@ class Contacts
             }
         }
 
-        $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
-        $response = $this->session->guzzleHttpClient->request(
-            method: 'POST',
-            uri: $webservice['url'] . '/co/contacts/card/',
-            options: [
-                'body' => \GuzzleHttp\Utils::jsonEncode([
-                    'contacts' => $contacts,
-                ], true),
-                'cookies' => $this->session->httpCookieJar,
-                'headers' => $this->headersDefault,
-                'query' => [
-                    'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
-                    'clientId' => self::CLIENT_ID,
-                    'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
-                    'clientVersion' => self::CLIENT_VERSION,
-                    'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
-                    'method' => $method,
-                    'locale' => 'en_GB',
-                    'order' => 'last,first',
-                    'prefToken' => $this->prefToken,
-                    'syncToken' => $this->syncToken,
+        try {
+            $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
+            $response = $this->session->guzzleHttpClient->request(
+                method: 'POST',
+                uri: $webservice['url'] . '/co/contacts/card/',
+                options: [
+                    'body' => \GuzzleHttp\Utils::jsonEncode([
+                        'contacts' => $contacts,
+                    ]),
+                    'cookies' => $this->session->httpCookieJar,
+                    'headers' => $this->headersDefault,
+                    'query' => [
+                        'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
+                        'clientId' => self::CLIENT_ID,
+                        'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
+                        'clientVersion' => self::CLIENT_VERSION,
+                        'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
+                        'method' => $method,
+                        'locale' => 'en_GB',
+                        'order' => 'last,first',
+                        'prefToken' => $this->prefToken,
+                        'syncToken' => $this->syncToken,
+                    ],
                 ],
-            ],
-        );
+            );
+            $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
+        } catch (\Exception $e) {
+            $body = \GuzzleHttp\Utils::jsonDecode(strval($e->getResponse()->getBody()), true);
+        }
 
-        $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
-
-        if (!empty($body['errorCode'])) {
-            throw new Exception\InvalidResponseException($body);
+        if (!empty($body['errorCode']) || isset($e)) {
+            if ($this->clearInvalidTokenCookies($body)) {
+                // retry
+                return $this->contactRequest($contacts, $method);
+            }
+            throw new Exception\InvalidResponseException($body['errorReason'] ?? '', $body['errorCode'] ?? 0);
         }
 
         $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
@@ -241,35 +260,42 @@ class Contacts
             }
         }
 
-        $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
-        $response = $this->session->guzzleHttpClient->request(
-            method: 'POST',
-            uri: $webservice['url'] . '/co/groups/card/',
-            options: [
-                'body' => \GuzzleHttp\Utils::jsonEncode([
-                    'groups' => $groups,
-                ], true),
-                'cookies' => $this->session->httpCookieJar,
-                'headers' => $this->headersDefault,
-                'query' => [
-                    'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
-                    'clientId' => self::CLIENT_ID,
-                    'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
-                    'clientVersion' => self::CLIENT_VERSION,
-                    'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
-                    'method' => 'PUT',
-                    'locale' => 'en_GB',
-                    'order' => 'last,first',
-                    'prefToken' => $this->prefToken,
-                    'syncToken' => $this->syncToken,
+        try {
+            $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
+            $response = $this->session->guzzleHttpClient->request(
+                method: 'POST',
+                uri: $webservice['url'] . '/co/groups/card/',
+                options: [
+                    'body' => \GuzzleHttp\Utils::jsonEncode([
+                        'groups' => $groups,
+                    ]),
+                    'cookies' => $this->session->httpCookieJar,
+                    'headers' => $this->headersDefault,
+                    'query' => [
+                        'clientBuildNumber' => self::CLIENT_BUILD_NUMBER,
+                        'clientId' => self::CLIENT_ID,
+                        'clientMasteringNumber' => self::CLIENT_MASTERING_NUMBER,
+                        'clientVersion' => self::CLIENT_VERSION,
+                        'dsid' => $this->sessionState['accountInfo']['dsInfo']['dsid'],
+                        'method' => 'PUT',
+                        'locale' => 'en_GB',
+                        'order' => 'last,first',
+                        'prefToken' => $this->prefToken,
+                        'syncToken' => $this->syncToken,
+                    ],
                 ],
-            ],
-        );
+            );
+            $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
+        } catch (\Exception $e) {
+            $body = \GuzzleHttp\Utils::jsonDecode(strval($e->getResponse()->getBody()), true);
+        }
 
-        $body = \GuzzleHttp\Utils::jsonDecode(strval($response->getBody()), true);
-
-        if (!empty($body['errorCode'])) {
-            throw new Exception\InvalidResponseException($body);
+        if (!empty($body['errorCode']) || isset($e)) {
+            if ($this->clearInvalidTokenCookies($body)) {
+                // retry
+                return $this->updateGroups($groups);
+            }
+            throw new Exception\InvalidResponseException($body['errorReason'] ?? '', $body['errorCode'] ?? 0);
         }
 
         $this->setTokenCookies($body['prefToken'] ?? null, $body['syncToken'] ?? null);
