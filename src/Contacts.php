@@ -162,10 +162,22 @@ class Contacts
         return $this->numContactsInGroups;
     }
 
-    public function list(string $groupId = '', int $offset = 0, int $limit = 200): array
-    {
+    public function list(
+        string $groupId = '',
+        string $search = '',
+        int $offset = 0,
+        int $limit = 200,
+    ): array {
         $this->getSyncToken();
 
+        $params = [
+            'groupId' => $groupId,
+            'offset' => $offset,
+            'limit' => $limit,
+        ];
+        if ($search !== '') {
+            $params['search'] = $search;
+        }
         try {
             $webservice = $this->sessionState['accountInfo']['webservices']['contacts'];
             $response = $this->session->guzzleHttpClient->request(
@@ -185,9 +197,7 @@ class Contacts
                         'prefToken' => $this->prefToken,
                         'syncToken' => $this->syncToken,
 
-                        'groupId' => $groupId,
-                        'offset' => $offset,
-                        'limit' => $limit,
+                        ...$params
                     ],
                 ],
             );
@@ -199,7 +209,7 @@ class Contacts
         if (!empty($body['errorCode']) || isset($e)) {
             if ($this->clearInvalidTokenCookies($body)) {
                 // retry
-                return $this->list($offset, $limit);
+                return $this->list($groupId, $search, $offset, $limit);
             }
             throw new Exception\InvalidResponseException($body['errorReason'] ?? '', $body['errorCode'] ?? 0);
         }
